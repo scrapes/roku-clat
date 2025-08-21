@@ -16,4 +16,8 @@ void tun_set_route(char *ifname, in_addr_t ip, int metric, int mtu, struct rtent
 bool tun_add_route(int sockfd, struct rtentry *route);
 bool tun_del_route(int sockfd, struct rtentry *route);
 
+// IPv6 routing table manipulation functions
+bool tun_manipulate_ipv6_routing(const char *ifname, struct in6_addr *src_addr, struct in6_addr *nat64_prefix);
+void tun_restore_ipv6_routing(const char *ifname);
+
 #endif

@@ -33,7 +33,6 @@ static const char GUIDE_TEXT[] =
     "  -g ip     : IPv4 gateway [" DEFAULT_GW "]\n"
     "  -6 addr   : IPv6 CLAT address [" DEFAULT_IP6_ADDR "]\n"
     "  -m mtu    : MTU [" STR(DEFAULT_MTU) "]\n"
-    "  -r        : Add default route\n"
     "  -d        : Enable debug logging\n"
     "  -h        : Display this message";
 
@@ -57,7 +56,7 @@ int main(int argc, char **argv)
 
     opterr = 0;
 
-    for (char c; (c = getopt(argc, argv, "i:4:g:6:m:rhd")) != -1;)
+    for (char c; (c = getopt(argc, argv, "i:4:g:6:m:hd")) != -1;)
     {
         switch (c)
         {
@@ -83,9 +82,6 @@ int main(int argc, char **argv)
             {
                 mtu = IF_MAX_MTU;
             }
-            break;
-        case 'r':
-            roku_cfg.add_route = true;
             break;
         case 'd':
             roku_cfg.debug = true;
@@ -192,8 +188,8 @@ void init(char *gateway, char *ip, char *ip6_addr, char *nat64_prefix, char *ifn
     
     if (roku_cfg.debug) {
         log_debug("Debug logging enabled");
-        log_debug("Configuration: ifname=%s, mtu=%d, add_route=%s", 
-                  roku_cfg.ifname, roku_cfg.mtu, roku_cfg.add_route ? "true" : "false");
+        log_debug("Configuration: ifname=%s, mtu=%d", 
+                  roku_cfg.ifname, roku_cfg.mtu);
     }
 
     signal(SIGINT, handle_signal);
@@ -249,19 +245,14 @@ int create_tun()
     }
     log_debug("TUN interface configured successfully");
 
-    if (roku_cfg.add_route)
+    // Manipulate IPv6 routing table to prioritize our interface for the source address
+    if (!tun_manipulate_ipv6_routing(roku_cfg.ifname, &roku_cfg.src_addr, &roku_cfg.dst_prefix))
     {
-        log_debug("Adding default route");
-        tun_set_route(roku_cfg.ifname, roku_cfg.gateway, ROUTE_METRIC, ROUTE_MTU, &roku_cfg.route);
-        if (!tun_add_route(ioctl_fd, &roku_cfg.route))
-        {
-            log_warn("Failed to add route");
-            roku_cfg.add_route = false;
-        }
-        else
-        {
-            log_debug("Default route added successfully");
-        }
+        log_warn("Failed to manipulate IPv6 routing table");
+    }
+    else
+    {
+        log_debug("IPv6 routing table manipulated successfully");
     }
 
     close(ioctl_fd);
@@ -272,20 +263,10 @@ int create_tun()
 void handle_signal(int signum)
 {
     log_info("Shutting down.");
-    if (roku_cfg.add_route)
-    {
-        log_debug("Removing default route");
-        int ioctl_fd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (ioctl_fd < 0 || !tun_del_route(ioctl_fd, &roku_cfg.route))
-        {
-            log_warn("Failed to remove route");
-        }
-        else
-        {
-            log_debug("Default route removed successfully");
-        }
-        close(ioctl_fd);
-    }
+    
+    log_debug("Restoring IPv6 routing table");
+    tun_restore_ipv6_routing(roku_cfg.ifname);
+    
     log_debug("Closing TUN interface");
     close(roku_cfg.tunfd);
     exit(EXIT_SUCCESS);

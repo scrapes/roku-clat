@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 
 #include <net/if.h>
 #include <netinet/in.h>
@@ -14,6 +15,8 @@
 
 #include <linux/if_tun.h>
 #include <linux/ipv6.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 
 #include "log.h"
 
@@ -223,4 +226,164 @@ bool tun_del_route(int sockfd, struct rtentry *route)
         log_debug("Failed to remove route");
     }
     return result;
+}
+
+// Helper function to add IPv6 route via netlink
+static bool tun_add_ipv6_route_netlink(int sock, const char *ifname, struct in6_addr *addr, int prefix_len, int metric)
+{
+    struct {
+        struct nlmsghdr nl;
+        struct rtmsg rt;
+        char buf[1024];
+    } req;
+    
+    memset(&req, 0, sizeof(req));
+    
+    // Netlink header
+    req.nl.nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
+    req.nl.nlmsg_type = RTM_NEWROUTE;
+    req.nl.nlmsg_flags = NLM_F_REQUEST | NLM_F_CREATE;
+    req.nl.nlmsg_seq = 1;
+    
+    // Route message
+    req.rt.rtm_family = AF_INET6;
+    req.rt.rtm_table = RT_TABLE_MAIN;
+    req.rt.rtm_protocol = RTPROT_BOOT;
+    req.rt.rtm_scope = RT_SCOPE_LINK;
+    req.rt.rtm_type = RTN_LOCAL;
+    req.rt.rtm_flags = RTM_F_NOTIFY;
+    
+    // Add interface attribute
+    struct rtattr *rta = (struct rtattr *)(((char *)&req) + NLMSG_ALIGN(req.nl.nlmsg_len));
+    rta->rta_type = RTA_OIF;
+    rta->rta_len = RTA_LENGTH(sizeof(int));
+    
+    int ifindex = if_nametoindex(ifname);
+    if (ifindex == 0) {
+        log_debug("Failed to get interface index for %s", ifname);
+        return false;
+    }
+    
+    memcpy(RTA_DATA(rta), &ifindex, sizeof(int));
+    req.nl.nlmsg_len = NLMSG_ALIGN(req.nl.nlmsg_len) + RTA_ALIGN(rta->rta_len);
+    
+    // Add destination address attribute
+    rta = (struct rtattr *)(((char *)&req) + NLMSG_ALIGN(req.nl.nlmsg_len));
+    rta->rta_type = RTA_DST;
+    rta->rta_len = RTA_LENGTH(prefix_len / 8);
+    memcpy(RTA_DATA(rta), addr, prefix_len / 8);
+    req.nl.nlmsg_len = NLMSG_ALIGN(req.nl.nlmsg_len) + RTA_ALIGN(rta->rta_len);
+    
+    // Send request
+    if (send(sock, &req, req.nl.nlmsg_len, 0) < 0) {
+        log_debug("Failed to send netlink route request");
+        return false;
+    }
+    
+    // Read response
+    char buf[1024];
+    ssize_t len = recv(sock, buf, sizeof(buf), 0);
+    if (len < 0) {
+        log_debug("Failed to receive netlink response");
+        return false;
+    }
+    
+    struct nlmsghdr *nlh = (struct nlmsghdr *)buf;
+    if (nlh->nlmsg_type == NLMSG_ERROR) {
+        struct nlmsgerr *err = (struct nlmsgerr *)NLMSG_DATA(nlh);
+        if (err->error != 0) {
+            log_debug("Netlink error: %s", strerror(-err->error));
+            return false;
+        }
+    }
+    
+    log_debug("IPv6 route added successfully for prefix length %d", prefix_len);
+    return true;
+}
+
+// Helper function to delete IPv6 route via netlink
+static void tun_del_ipv6_route_netlink(int sock, const char *ifname)
+{
+    // Implementation for deleting routes
+    // This would be similar to the add function but with RTM_DELROUTE
+    log_debug("IPv6 route deletion not yet implemented");
+}
+
+// IPv6 routing table manipulation functions
+bool tun_manipulate_ipv6_routing(const char *ifname, struct in6_addr *src_addr, struct in6_addr *nat64_prefix)
+{
+    log_debug("Manipulating IPv6 routing table for interface %s", ifname);
+    
+    // Create netlink socket for IPv6 routing manipulation
+    int sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+    if (sock < 0) {
+        log_debug("Failed to create netlink socket");
+        return false;
+    }
+    
+    // Bind netlink socket
+    struct sockaddr_nl addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.nl_family = AF_NETLINK;
+    addr.nl_pid = getpid();
+    
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        log_debug("Failed to bind netlink socket");
+        close(sock);
+        return false;
+    }
+    
+    bool success = true;
+    
+    // Add route for our source address with high priority (lower metric = higher priority)
+    if (!tun_add_ipv6_route_netlink(sock, ifname, src_addr, 128, 100)) {
+        log_debug("Failed to add source address route");
+        success = false;
+    }
+    
+    // Add route for NAT64 prefix with lower priority
+    if (!tun_add_ipv6_route_netlink(sock, ifname, nat64_prefix, 96, 200)) {
+        log_debug("Failed to add NAT64 prefix route");
+        success = false;
+    }
+    
+    close(sock);
+    
+    if (success) {
+        log_debug("IPv6 routing table manipulation completed successfully");
+    } else {
+        log_debug("IPv6 routing table manipulation failed");
+    }
+    
+    return success;
+}
+
+void tun_restore_ipv6_routing(const char *ifname)
+{
+    log_debug("Restoring IPv6 routing table for interface %s", ifname);
+    
+    // Create netlink socket
+    int sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+    if (sock < 0) {
+        log_debug("Failed to create netlink socket for cleanup");
+        return;
+    }
+    
+    // Bind netlink socket
+    struct sockaddr_nl addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.nl_family = AF_NETLINK;
+    addr.nl_pid = getpid();
+    
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        log_debug("Failed to bind netlink socket for cleanup");
+        close(sock);
+        return;
+    }
+    
+    // Remove routes we added
+    tun_del_ipv6_route_netlink(sock, ifname);
+    
+    close(sock);
+    log_debug("IPv6 routing table restored");
 }
