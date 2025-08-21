@@ -23,7 +23,7 @@ ifeq ($(PREFIX),)
 	PREFIX := /usr/local
 endif
 
-.PHONY: all clean
+.PHONY: all clean docker-build macos-build
 
 all: $(BIN)
 
@@ -34,6 +34,11 @@ $(BIN): $(OBJS)
 $(OBJDIR)/%.$(OBJEXT): $(SRCDIR)/%.$(SRCEXT) $(DEPS)
 	@mkdir -p $(dir $@)
 	$(CC) -c -o $@ $< $(CFLAGS) $(INC)
+
+# Build for Linux using Docker (creates Linux binary)
+docker-build:
+	@echo "Building roku-clat for Linux in Docker container..."
+	docker run --rm -v $(PWD):/workspace -w /workspace docker.io/library/gcc:latest make clean all
 
 clean:
 	$(RM) -r $(BINDIR) $(OBJDIR)

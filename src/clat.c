@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip6.h>
+#include <arpa/inet.h>
 
 #include <sys/uio.h>
 
@@ -17,6 +18,11 @@
 
 static int clat_packet_4to6(struct iphdr *ip_header, char *payload, int payload_length)
 {
+    log_debug("Translating IPv4 packet: src=%s, dst=%s, proto=%d, ttl=%d", 
+              inet_ntoa(*(struct in_addr*)&ip_header->saddr),
+              inet_ntoa(*(struct in_addr*)&ip_header->daddr),
+              ip_header->protocol, ip_header->ttl);
+    
     ip_header->ttl--;
     struct ip6_hdr ip6_header;
     xlat_header_4to6(ip_header, &ip6_header, payload_length);
@@ -41,10 +47,14 @@ static int clat_packet_4to6(struct iphdr *ip_header, char *payload, int payload_
     if ((flags & IP_MF) || offset > 0)
     {
         fragment = true;
+        log_debug("Packet is a fragment: offset=%d, flags=0x%x", offset, flags);
     }
     else
     {
         fragment = (flags & IP_DF) ? false : ((sizeof(struct ip6_hdr) + payload_length) > IPV6_MIN_MTU);
+        if (fragment) {
+            log_debug("Packet needs fragmentation: payload_length=%d, will exceed IPv6_MIN_MTU", payload_length);
+        }
     }
 
     if (fragment)
@@ -72,6 +82,9 @@ static int clat_packet_4to6(struct iphdr *ip_header, char *payload, int payload_
                     mf_flag = 0;
                 }
             }
+
+            log_debug("Creating fragment: offset=%d, length=%d, mf_flag=%s", 
+                      frag_offset, frag_payload_len, mf_flag ? "true" : "false");
 
             ip6_header.ip6_plen = htons(frag_payload_len + sizeof(struct ip6_frag));
             ip6_fragment.ip6f_offlg = htons((offset + frag_offset) | mf_flag >> 13);
@@ -107,19 +120,29 @@ int clat_4to6(char *ip_packet, int packet_length)
 {
     if (packet_length < sizeof(struct iphdr))
     {
+        log_debug("IPv4 packet too short: %d < %zu", packet_length, sizeof(struct iphdr));
         return 0;
     }
 
     struct iphdr *ip_header = (struct iphdr *)ip_packet;
     int ip_header_len = ip_header->ihl * 4;
 
+    log_debug("Processing IPv4 packet: src=%s, dst=%s, proto=%d, ttl=%d, header_len=%d", 
+              inet_ntoa(*(struct in_addr*)&ip_header->saddr),
+              inet_ntoa(*(struct in_addr*)&ip_header->daddr),
+              ip_header->protocol, ip_header->ttl, ip_header_len);
+
     if (ip_header->version != 4 || ip_header_len < sizeof(struct iphdr) || ip_header_len > packet_length || ip_header->ttl == 0 || checksum(ip_header, ip_header_len) != 0)
     {
+        log_debug("Invalid IPv4 packet: version=%d, header_len=%d, ttl=%d, checksum_valid=%s", 
+                  ip_header->version, ip_header_len, ip_header->ttl, 
+                  checksum(ip_header, ip_header_len) == 0 ? "true" : "false");
         return 0;
     }
 
     if (!addr_validate(ip_header->daddr))
     {
+        log_debug("Invalid destination address: %s", inet_ntoa(*(struct in_addr*)&ip_header->daddr));
         if (ip_header->protocol != IPPROTO_ICMP)
         {
             icmp_send_error(ICMP_DEST_UNREACH, ICMP_UNREACH_FILTER_PROHIB, roku_cfg.gateway, ip_header->saddr, ip_packet, packet_length, 0);
@@ -128,6 +151,7 @@ int clat_4to6(char *ip_packet, int packet_length)
     }
     if (ip_header->ttl - 1 == 0)
     {
+        log_debug("TTL expired: ttl=%d", ip_header->ttl);
         icmp_send_error(ICMP_TIME_EXCEEDED, ICMP_TIMXCEED_INTRANS, roku_cfg.gateway, ip_header->saddr, ip_packet, packet_length, 0);
         return 0;
     }
@@ -136,15 +160,18 @@ int clat_4to6(char *ip_packet, int packet_length)
     int payload_length = packet_length - ip_header_len;
 
     bool fragmented = ip_header->frag_off & htons(IP_OFFMASK | IP_MF);
+    log_debug("Packet analysis: payload_length=%d, fragmented=%s", payload_length, fragmented ? "true" : "false");
 
     if (ip_header->protocol == IPPROTO_ICMP)
     {
         if (fragmented)
         {
+            log_debug("Dropping fragmented ICMP packet");
             return 0; // Fragmented ICMP is not supported
         }
         else
         {
+            log_debug("Processing ICMP packet");
             return icmp_4to6(ip_header, payload, payload_length);
         }
     }
@@ -155,22 +182,28 @@ int clat_4to6(char *ip_packet, int packet_length)
             int adjusted_mtu = roku_cfg.mtu - MTU_DIFF;
             if (packet_length > adjusted_mtu)
             {
+                log_debug("Packet too large for MTU: %d > %d, sending ICMP error", packet_length, adjusted_mtu);
                 icmp_send_error(ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED, roku_cfg.gateway, roku_cfg.ip, ip_packet, packet_length, adjusted_mtu);
                 return 0;
             }
         }
 
+        log_debug("Translating IPv4 packet to IPv6");
         return clat_packet_4to6(ip_header, payload, payload_length);
     }
 }
 
 static int clat_packet_6to4(struct ip6_hdr *ip6_header, struct ip6_frag *ip6_fragment, char *payload, int payload_length)
 {
+    log_debug("Translating IPv6 packet to IPv4: proto=%d, payload_length=%d", 
+              ip6_header->ip6_nxt, payload_length);
+    
     ip6_header->ip6_hops--;
 
     struct iphdr ip_header;
     if (!xlat_header_6to4(ip6_header, ip6_fragment, &ip_header, payload_length))
     {
+        log_debug("Failed to translate IPv6 header to IPv4");
         return 0;
     }
 
@@ -179,8 +212,13 @@ static int clat_packet_6to4(struct ip6_hdr *ip6_header, struct ip6_frag *ip6_fra
     {
         if (xlat_payload_6to4(&ip_header, ip6_header, payload, payload_length) < 0)
         {
+            log_debug("Failed to translate IPv6 payload to IPv4");
             return 0;
         }
+    }
+    else
+    {
+        log_debug("Processing IPv6 fragment: offset=%d", offset);
     }
 
     struct iovec iov[2];
@@ -202,6 +240,7 @@ int clat_6to4(char *ip6_packet, int packet_length)
 {
     if (packet_length < sizeof(struct ip6_hdr))
     {
+        log_debug("IPv6 packet too short: %d < %zu", packet_length, sizeof(struct ip6_hdr));
         return 0;
     }
 
@@ -209,11 +248,19 @@ int clat_6to4(char *ip6_packet, int packet_length)
 
     if ((ip6_header->ip6_vfc >> 4) != 6 || ip6_header->ip6_hops == 0)
     {
+        log_debug("Invalid IPv6 packet: version=%d, hops=%d", 
+                  ip6_header->ip6_vfc >> 4, ip6_header->ip6_hops);
         return 0;
     }
 
+    log_debug("Processing IPv6 packet: src=%s, dst=%s, proto=%d, hops=%d", 
+              inet_ntop(AF_INET6, &ip6_header->ip6_src, (char[INET6_ADDRSTRLEN]){0}, INET6_ADDRSTRLEN),
+              inet_ntop(AF_INET6, &ip6_header->ip6_dst, (char[INET6_ADDRSTRLEN]){0}, INET6_ADDRSTRLEN),
+              ip6_header->ip6_nxt, ip6_header->ip6_hops);
+
     if (!ADDR_MATCH_PREFIX(ip6_header->ip6_dst, roku_cfg.dst_prefix) && !ADDR_MATCH_PREFIX(ip6_header->ip6_dst, roku_cfg.src_prefix))
     {
+        log_debug("Destination address does not match configured prefixes");
         if (ip6_header->ip6_nxt != IPPROTO_ICMPV6)
         {
             icmp6_send_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_ADMIN, &roku_cfg.gateway6, &ip6_header->ip6_src, ip6_packet, packet_length, 0);
@@ -222,11 +269,13 @@ int clat_6to4(char *ip6_packet, int packet_length)
     }
     if (ip6_header->ip6_hops - 1 == 0)
     {
+        log_debug("IPv6 TTL expired: hops=%d", ip6_header->ip6_hops);
         icmp6_send_error(ICMP6_TIME_EXCEEDED, ICMP6_TIME_EXCEED_TRANSIT, &roku_cfg.gateway6, &ip6_header->ip6_src, ip6_packet, packet_length, 0);
         return 0;
     }
     if (packet_length > roku_cfg.mtu)
     {
+        log_debug("IPv6 packet too large for MTU: %d > %d", packet_length, roku_cfg.mtu);
         icmp6_send_error(ICMP6_PACKET_TOO_BIG, 0, &roku_cfg.gateway6, &ip6_header->ip6_src, ip6_packet, packet_length, roku_cfg.mtu);
         return 0;
     }
@@ -236,6 +285,7 @@ int clat_6to4(char *ip6_packet, int packet_length)
 
     if (ip6_header->ip6_nxt == IPPROTO_ICMPV6)
     {
+        log_debug("Processing ICMPv6 packet");
         return icmp_6to4(ip6_header, payload, payload_length);
     }
     else
@@ -244,21 +294,26 @@ int clat_6to4(char *ip6_packet, int packet_length)
 
         if (ip6_header->ip6_nxt == IPPROTO_FRAGMENT)
         {
+            log_debug("Processing IPv6 fragment");
             if (payload_length < sizeof(struct ip6_frag))
             {
+                log_debug("IPv6 fragment payload too short: %d < %zu", payload_length, sizeof(struct ip6_frag));
                 return 0;
             }
 
             ip6_fragment = (struct ip6_frag *)payload;
             if (ip6_fragment->ip6f_nxt == IPPROTO_ICMPV6)
             {
+                log_debug("Dropping fragmented ICMPv6 packet (not supported)");
                 return 0; // Fragmented ICMP is not supported
             }
 
             payload += sizeof(struct ip6_frag);
             payload_length -= sizeof(struct ip6_frag);
+            log_debug("Fragment header processed: new payload_length=%d", payload_length);
         }
 
+        log_debug("Translating IPv6 packet to IPv4");
         return clat_packet_6to4(ip6_header, ip6_fragment, payload, payload_length);
     }
 }

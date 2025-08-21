@@ -34,6 +34,7 @@ static const char GUIDE_TEXT[] =
     "  -6 prefix : IPv6 CLAT prefix [" DEFAULT_IP6_PREFIX "]\n"
     "  -m mtu    : MTU [" STR(DEFAULT_MTU) "]\n"
     "  -r        : Add default route\n"
+    "  -d        : Enable debug logging\n"
     "  -h        : Display this message";
 
 static const char BADIP_FMT_TEXT[] = "'%s' is not a valid IPv4 address.";
@@ -56,7 +57,7 @@ int main(int argc, char **argv)
 
     opterr = 0;
 
-    for (char c; (c = getopt(argc, argv, "i:4:g:6:m:rh")) != -1;)
+    for (char c; (c = getopt(argc, argv, "i:4:g:6:m:rhd")) != -1;)
     {
         switch (c)
         {
@@ -85,6 +86,9 @@ int main(int argc, char **argv)
             break;
         case 'r':
             roku_cfg.add_route = true;
+            break;
+        case 'd':
+            roku_cfg.debug = true;
             break;
         case 'h':
             printf("%s\n%s\n", USAGE_TEXT, GUIDE_TEXT);
@@ -125,13 +129,17 @@ int main(int argc, char **argv)
 
         ver = in_packet[0] >> 4;
 
+        log_debug("Received packet: size=%d, version=%d", size, ver);
+
         if (ver == 4)
         {
+            log_debug("Processing IPv4 packet");
             if (clat_4to6(in_packet, size) < 0)
                 die("Fatal error occured while translating IPv4 packet");
         }
         else if (ver == 6)
         {
+            log_debug("Processing IPv6 packet");
             if (clat_6to4(in_packet, size) < 0)
                 die("Fatal error occured while translating IPv6 packet");
         }
@@ -181,6 +189,12 @@ void init(char *gateway, char *ip, char *ip6_prefix, char *nat64_prefix, char *i
     log_info("Gateway: %s", gateway);
     log_info("Client IPv6 prefix: %s", ip6_prefix);
     log_info("NAT64 prefix: %s", nat64_prefix);
+    
+    if (roku_cfg.debug) {
+        log_debug("Debug logging enabled");
+        log_debug("Configuration: ifname=%s, mtu=%d, add_route=%s", 
+                  roku_cfg.ifname, roku_cfg.mtu, roku_cfg.add_route ? "true" : "false");
+    }
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
@@ -188,6 +202,8 @@ void init(char *gateway, char *ip, char *ip6_prefix, char *nat64_prefix, char *i
 
 int create_tun()
 {
+    log_debug("Creating TUN interface: %s", roku_cfg.ifname);
+    
     int ioctl_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (ioctl_fd < 0)
     {
@@ -195,6 +211,7 @@ int create_tun()
 
         return -1;
     }
+    log_debug("Created AF_INET socket for ioctl operations");
 
     int ioctl6_fd = socket(AF_INET6, SOCK_DGRAM, 0);
     if (ioctl6_fd < 0)
@@ -204,6 +221,7 @@ int create_tun()
         close(ioctl_fd);
         return -1;
     }
+    log_debug("Created AF_INET6 socket for ioctl operations");
 
     int tunfd = tun_new(roku_cfg.ifname);
     if (tunfd < 0)
@@ -214,6 +232,7 @@ int create_tun()
         close(ioctl6_fd);
         return -1;
     }
+    log_debug("Created TUN interface with fd: %d", tunfd);
 
     if (!tun_set_ip(ioctl_fd, roku_cfg.ifname, roku_cfg.ip, 0xffffffff) ||
         !tun_set_ip6(ioctl6_fd, roku_cfg.ifname, &roku_cfg.gateway6, 96) ||
@@ -228,14 +247,20 @@ int create_tun()
         close(ioctl6_fd);
         return -1;
     }
+    log_debug("TUN interface configured successfully");
 
     if (roku_cfg.add_route)
     {
+        log_debug("Adding default route");
         tun_set_route(roku_cfg.ifname, roku_cfg.gateway, ROUTE_METRIC, ROUTE_MTU, &roku_cfg.route);
         if (!tun_add_route(ioctl_fd, &roku_cfg.route))
         {
             log_warn("Failed to add route");
             roku_cfg.add_route = false;
+        }
+        else
+        {
+            log_debug("Default route added successfully");
         }
     }
 
@@ -249,13 +274,19 @@ void handle_signal(int signum)
     log_info("Shutting down.");
     if (roku_cfg.add_route)
     {
+        log_debug("Removing default route");
         int ioctl_fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (ioctl_fd < 0 || !tun_del_route(ioctl_fd, &roku_cfg.route))
         {
             log_warn("Failed to remove route");
         }
+        else
+        {
+            log_debug("Default route removed successfully");
+        }
         close(ioctl_fd);
     }
+    log_debug("Closing TUN interface");
     close(roku_cfg.tunfd);
     exit(EXIT_SUCCESS);
 }

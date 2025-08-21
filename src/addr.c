@@ -2,8 +2,10 @@
 
 #include <stdbool.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "roku.h"
+#include "log.h"
 
 static uint32_t crc32(const void *data, int length)
 {
@@ -56,25 +58,37 @@ static uint32_t crc32(const void *data, int length)
 
 bool addr_6to4(struct in6_addr *ip6, in_addr_t *ip, bool pseudo)
 {
+    char ip6_str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET6, ip6, ip6_str, INET6_ADDRSTRLEN);
+    
     if (ADDR_MATCH_PREFIX((*ip6), roku_cfg.src_prefix) || ADDR_MATCH_PREFIX((*ip6), roku_cfg.dst_prefix))
     {
         *ip = ip6->s6_addr32[3];
+        log_debug("IPv6 to IPv4: %s -> %s (prefix match)", ip6_str, inet_ntoa(*(struct in_addr*)ip));
         return true;
     }
     else if (pseudo)
     {
         *ip = htonl(crc32(ip6, sizeof(struct in6_addr)));
         *ip |= htonl(0xf0000000);
+        log_debug("IPv6 to IPv4: %s -> %s (pseudo)", ip6_str, inet_ntoa(*(struct in_addr*)ip));
         return true;
     }
     else
     {
+        log_debug("IPv6 to IPv4: %s -> no match", ip6_str);
         return false;
     }
 }
 
 void addr_4to6(in_addr_t ip, struct in6_addr *ip6, struct in6_addr *prefix)
 {
+    char ip4_str[INET_ADDRSTRLEN];
+    char prefix_str[INET6_ADDRSTRLEN];
+    inet_ntop(AF_INET, &ip, ip4_str, INET_ADDRSTRLEN);
+    inet_ntop(AF_INET6, prefix, prefix_str, INET6_ADDRSTRLEN);
+    
+    log_debug("IPv4 to IPv6: %s -> %s", ip4_str, prefix_str);
 
     *ip6 = *prefix;
     ip6->s6_addr32[3] = ip;

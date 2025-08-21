@@ -1,6 +1,8 @@
 #ifndef ROKU_LOG_H
 #define ROKU_LOG_H
 
+#include "roku.h"
+
 typedef enum
 {
     LOG_INFO,
@@ -16,11 +18,11 @@ void _log(log_level_t type, const char *file, int line, const char *format, ...)
 #define log_warn(format, args...) _log(LOG_WARN, __FILE__, __LINE__, format, ##args)
 #define log_error(format, args...) _log(LOG_ERROR, __FILE__, __LINE__, format, ##args)
 
-#ifdef DEBUG
-#define log_debug(format, args...) _log(LOG_DEBUG, __FILE__, __LINE__, format, ##args)
-#else
-#define log_debug(msg)
-#endif
+#define log_debug(format, args...) do { \
+    if (roku_cfg.debug) { \
+        _log(LOG_DEBUG, __FILE__, __LINE__, format, ##args); \
+    } \
+} while(0)
 
 #define die(format, args...) _log(LOG_FATAL, __FILE__, __LINE__, format, ##args)
 

@@ -29,6 +29,7 @@ struct roku_config
     in_addr_t ip, gateway;
     struct in6_addr src_prefix, dst_prefix, gateway6;
     bool add_route;
+    bool debug;
     struct rtentry route;
 };
 
