@@ -83,6 +83,8 @@ uint16_t checksum_sum(uint16_t a, uint16_t b)
     return ~((sum >> 16) + (sum & 0xffff));
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wuninitialized"
 uint16_t checksum_pseudo6(struct ip6_hdr *ip6_header, uint32_t payload_length, uint8_t protocol)
 {
     uint32_t sum = 0;
@@ -97,3 +99,5 @@ uint16_t checksum_pseudo6(struct ip6_hdr *ip6_header, uint32_t payload_length, u
 
     return checksum_finish(sum);
 }
+
+#pragma GCC diagnostic pop

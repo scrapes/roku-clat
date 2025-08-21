@@ -10,7 +10,7 @@ OBJEXT := o
 CC     := gcc
 CFLAGS := -std=gnu11 -Wall -Werror -O2 -g
 INC    := -I$(INCDIR)
-LIB    :=
+LIB    := -static
 
 TARGET := roku
 
@@ -29,13 +29,10 @@ all: $(BIN)
 
 $(BIN): $(OBJS)
 	@mkdir -p $(BINDIR)
-
-	$(CC) -o $(BIN) $^ $(LIB)
-	@echo Compiled $(TARGET)
+	$(CC) -static -o $(BIN) $^ $(LIB)
 
 $(OBJDIR)/%.$(OBJEXT): $(SRCDIR)/%.$(SRCEXT) $(DEPS)
 	@mkdir -p $(dir $@)
-
 	$(CC) -c -o $@ $< $(CFLAGS) $(INC)
 
 clean:
@@ -44,3 +41,4 @@ clean:
 install: $(BIN)
 	install -d $(DESTDIR)$(PREFIX)/bin/
 	install -m 755 $(BIN) $(DESTDIR)$(PREFIX)/bin/
+
