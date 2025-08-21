@@ -313,6 +313,8 @@ static void tun_del_ipv6_route_netlink(int sock, const char *ifname)
 bool tun_manipulate_ipv6_routing(const char *ifname, struct in6_addr *src_addr, struct in6_addr *nat64_prefix)
 {
     log_debug("Manipulating IPv6 routing table for interface %s", ifname);
+    log_debug("Setting source address route with metric 0 (highest priority)");
+    log_debug("Setting NAT64 prefix route with metric 200 (lower priority)");
     
     // Create netlink socket for IPv6 routing manipulation
     int sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
@@ -336,7 +338,8 @@ bool tun_manipulate_ipv6_routing(const char *ifname, struct in6_addr *src_addr, 
     bool success = true;
     
     // Add route for our source address with high priority (lower metric = higher priority)
-    if (!tun_add_ipv6_route_netlink(sock, ifname, src_addr, 128, 100)) {
+    // Set metric to 0 for roku interface to give it higher priority than eth0
+    if (!tun_add_ipv6_route_netlink(sock, ifname, src_addr, 128, 0)) {
         log_debug("Failed to add source address route");
         success = false;
     }
