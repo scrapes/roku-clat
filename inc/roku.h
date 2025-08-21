@@ -13,7 +13,7 @@
 #define DEFAULT_GW "192.0.0.1"
 #define DEFAULT_IP "192.0.0.2"
 
-#define DEFAULT_IP6_PREFIX "fd64:64:64::"
+#define DEFAULT_IP6_ADDR "fd64:64:64::1"
 
 #define DEFAULT_IFNAME "roku"
 #define DEFAULT_MTU 1500
@@ -27,7 +27,7 @@ struct roku_config
     int tunfd;
     int mtu;
     in_addr_t ip, gateway;
-    struct in6_addr src_prefix, dst_prefix, gateway6;
+    struct in6_addr src_addr, dst_prefix, gateway6;
     bool add_route;
     bool debug;
     struct rtentry route;

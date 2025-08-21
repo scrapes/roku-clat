@@ -258,9 +258,9 @@ int clat_6to4(char *ip6_packet, int packet_length)
               inet_ntop(AF_INET6, &ip6_header->ip6_dst, (char[INET6_ADDRSTRLEN]){0}, INET6_ADDRSTRLEN),
               ip6_header->ip6_nxt, ip6_header->ip6_hops);
 
-    if (!ADDR_MATCH_PREFIX(ip6_header->ip6_dst, roku_cfg.dst_prefix) && !ADDR_MATCH_PREFIX(ip6_header->ip6_dst, roku_cfg.src_prefix))
+    if (!ADDR_MATCH_PREFIX(ip6_header->ip6_dst, roku_cfg.dst_prefix) && !ADDR_MATCH_SRC(ip6_header->ip6_dst, roku_cfg.src_addr))
     {
-        log_debug("Destination address does not match configured prefixes");
+        log_debug("Destination address does not match configured prefixes or source address");
         if (ip6_header->ip6_nxt != IPPROTO_ICMPV6)
         {
             icmp6_send_error(ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_ADMIN, &roku_cfg.gateway6, &ip6_header->ip6_src, ip6_packet, packet_length, 0);

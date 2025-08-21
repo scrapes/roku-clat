@@ -21,7 +21,11 @@ void xlat_header_4to6(struct iphdr *ip_header, struct ip6_hdr *ip6_header, int p
     ip6_header->ip6_plen = htons(payload_length);
     ip6_header->ip6_nxt = (ip_header->protocol == IPPROTO_ICMP) ? IPPROTO_ICMPV6 : ip_header->protocol;
     ip6_header->ip6_hops = ip_header->ttl;
-    addr_4to6(ip_header->saddr, &ip6_header->ip6_src, &roku_cfg.src_prefix);
+    
+    // Always use our source address for outgoing packets
+    ip6_header->ip6_src = roku_cfg.src_addr;
+    
+    // Translate destination to NAT64 prefix
     addr_4to6(ip_header->daddr, &ip6_header->ip6_dst, &roku_cfg.dst_prefix);
 }
 

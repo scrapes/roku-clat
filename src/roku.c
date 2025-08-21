@@ -31,16 +31,16 @@ static const char GUIDE_TEXT[] =
     "  -i name   : Interface name [" DEFAULT_IFNAME "]\n"
     "  -4 ip     : IPv4 address [" DEFAULT_IP "]\n"
     "  -g ip     : IPv4 gateway [" DEFAULT_GW "]\n"
-    "  -6 prefix : IPv6 CLAT prefix [" DEFAULT_IP6_PREFIX "]\n"
+    "  -6 addr   : IPv6 CLAT address [" DEFAULT_IP6_ADDR "]\n"
     "  -m mtu    : MTU [" STR(DEFAULT_MTU) "]\n"
     "  -r        : Add default route\n"
     "  -d        : Enable debug logging\n"
     "  -h        : Display this message";
 
 static const char BADIP_FMT_TEXT[] = "'%s' is not a valid IPv4 address.";
-static const char BADPREFIX_FMT_TEXT[] = "'%s' is not a valid IPv6 /96 prefix.";
+static const char BADADDR_FMT_TEXT[] = "'%s' is not a valid IPv6 address.";
 
-void init(char *gateway, char *ip, char *ip6_prefix, char *nat64_prefix, char *ifname, int mtu);
+void init(char *gateway, char *ip, char *ip6_addr, char *nat64_prefix, char *ifname, int mtu);
 int create_tun();
 void handle_signal(int signum);
 
@@ -50,7 +50,7 @@ int main(int argc, char **argv)
 {
     char *ip = DEFAULT_IP;
     char *gateway = DEFAULT_GW;
-    char *ip6_prefix = DEFAULT_IP6_PREFIX;
+    char *ip6_addr = DEFAULT_IP6_ADDR;
     char *ifname = DEFAULT_IFNAME;
     char *nat64_prefix = NULL;
     int mtu = DEFAULT_MTU;
@@ -71,7 +71,7 @@ int main(int argc, char **argv)
             ip = optarg;
             break;
         case '6':
-            ip6_prefix = optarg;
+            ip6_addr = optarg;
             break;
         case 'm':
             mtu = atol(optarg);
@@ -115,7 +115,7 @@ int main(int argc, char **argv)
     }
     nat64_prefix = argv[optind];
 
-    init(gateway, ip, ip6_prefix, nat64_prefix, ifname, mtu);
+    init(gateway, ip, ip6_addr, nat64_prefix, ifname, mtu);
 
     for (;;)
     {
@@ -152,7 +152,7 @@ int main(int argc, char **argv)
     return EXIT_FAILURE;
 }
 
-void init(char *gateway, char *ip, char *ip6_prefix, char *nat64_prefix, char *ifname, int mtu)
+void init(char *gateway, char *ip, char *ip6_addr, char *nat64_prefix, char *ifname, int mtu)
 {
     if (!inet_pton(AF_INET, gateway, &roku_cfg.gateway))
     {
@@ -162,17 +162,17 @@ void init(char *gateway, char *ip, char *ip6_prefix, char *nat64_prefix, char *i
     {
         die(BADIP_FMT_TEXT, ip);
     }
-    if (!inet_pton(AF_INET6, ip6_prefix, &roku_cfg.src_prefix) || !ADDR_VALID_PREFIX(roku_cfg.src_prefix))
+    if (!inet_pton(AF_INET6, ip6_addr, &roku_cfg.src_addr) || !ADDR_VALID_ADDR(roku_cfg.src_addr))
     {
-        die(BADPREFIX_FMT_TEXT, ip6_prefix);
+        die(BADADDR_FMT_TEXT, ip6_addr);
     }
     if (!inet_pton(AF_INET6, nat64_prefix, &roku_cfg.dst_prefix) || !ADDR_VALID_PREFIX(roku_cfg.dst_prefix))
     {
-        die(BADPREFIX_FMT_TEXT, nat64_prefix);
+        die(BADADDR_FMT_TEXT, nat64_prefix);
     }
 
-    roku_cfg.gateway6 = roku_cfg.src_prefix;
-    roku_cfg.gateway6.s6_addr32[3] = roku_cfg.gateway;
+    // Set gateway6 to our source address
+    roku_cfg.gateway6 = roku_cfg.src_addr;
 
     strncpy(roku_cfg.ifname, ifname, sizeof(roku_cfg.ifname) - 1);
     roku_cfg.ifname[sizeof(roku_cfg.ifname) - 1] = 0;
@@ -187,7 +187,7 @@ void init(char *gateway, char *ip, char *ip6_prefix, char *nat64_prefix, char *i
     log_info("MTU: %d", roku_cfg.mtu);
     log_info("IPv4: %s", ip);
     log_info("Gateway: %s", gateway);
-    log_info("Client IPv6 prefix: %s", ip6_prefix);
+    log_info("Client IPv6 address: %s", ip6_addr);
     log_info("NAT64 prefix: %s", nat64_prefix);
     
     if (roku_cfg.debug) {
@@ -235,7 +235,7 @@ int create_tun()
     log_debug("Created TUN interface with fd: %d", tunfd);
 
     if (!tun_set_ip(ioctl_fd, roku_cfg.ifname, roku_cfg.ip, 0xffffffff) ||
-        !tun_set_ip6(ioctl6_fd, roku_cfg.ifname, &roku_cfg.gateway6, 96) ||
+        !tun_set_ip6(ioctl6_fd, roku_cfg.ifname, &roku_cfg.src_addr, 128) ||
         !tun_set_dest_ip(ioctl_fd, roku_cfg.ifname, roku_cfg.gateway) ||
         !tun_set_mtu(ioctl_fd, roku_cfg.ifname, roku_cfg.mtu) ||
         !tun_up(ioctl_fd, roku_cfg.ifname))
